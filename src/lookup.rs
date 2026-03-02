@@ -146,6 +146,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 	let include_reminders = should_snapshot_include_reminders(last_sync_timestamp, current_timestamp, &logger);
 
 	log_info!(logger, "Obtaining corresponding database entries");
+	let start = Instant::now();
 	// get all the channel announcements that are currently in the network graph
 	let announcement_rows = client.query_raw("SELECT announcement_signed, funding_amount_sats, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM channel_announcements WHERE short_channel_id = any($1) ORDER BY short_channel_id ASC", [&channel_ids]).await.unwrap();
 	let mut pinned_rows = Box::pin(announcement_rows);
@@ -169,7 +170,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 		announcement_count += 1;
 	}
-	log_info!(logger, "Fetched {} announcement rows", announcement_count);
+	log_info!(logger, "Fetched {} announcement rows in {:?}", announcement_count, start.elapsed());
 
 	{
 		// THIS STEP IS USED TO DETERMINE IF A CHANNEL SHOULD BE OMITTED FROM THE DELTA
@@ -182,6 +183,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 		// here is where the channels whose first update in either direction occurred after
 		// `last_seen_timestamp` are added to the selection
+		let start = Instant::now();
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
 			[&channel_ids, &last_sync_timestamp_float];
 		let newer_oldest_directional_updates = client.query_raw("
@@ -213,7 +215,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 
 			newer_oldest_directional_update_count += 1;
 		}
-		log_info!(logger, "Fetched {} update rows of the first update in a new direction", newer_oldest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the first update in a new direction in {:?}", newer_oldest_directional_update_count, start.elapsed());
 	}
 
 	if include_reminders {
@@ -250,6 +252,7 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		3x the timeframe that we consider necessitates reminders.
 		*/
 
+		let start = Instant::now();
 		let mutated_updates = client.query_raw("
 		SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen FROM (
 			SELECT short_channel_id, direction, timestamp, seen, blob_signed, COALESCE (
@@ -318,7 +321,8 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 				log_gossip!(logger, "Reminder requirement triggered by update for channel {} in direction {}", scid, direction);
 			}
 		}
-		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction", older_latest_directional_update_count);
+		log_info!(logger, "Fetched {} update rows of the latest update in the less recently updated direction in {:?}",
+			older_latest_directional_update_count, start.elapsed());
 	}
 }
 
@@ -377,13 +381,14 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 		reference_row_count += 1;
 	}
 
-	log_info!(logger, "Processed {} reference rows (delta size: {}) in {:?}",
+	log_info!(logger, "Fetched + processed {} reference rows (delta size: {}) in {:?}",
 		reference_row_count, delta_set.len(), start.elapsed());
 
 	// get all the intermediate channel updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
 
+	let start = Instant::now();
 	let intermediate_updates = client.query_raw("
 		SELECT id, direction, blob_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
 		FROM channel_updates
@@ -463,7 +468,7 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 			}
 		}
 	}
-	log_info!(logger, "Processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Fetched + processed intermediate rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 }
 
 pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &NetworkGraph<L>, client: &Client, last_sync_timestamp: u32, snapshot_reference_timestamp: Option<u64>, logger: L) -> NodeDeltaSet where L::Target: Logger {
@@ -533,7 +538,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	}
 
 
-	log_info!(logger, "Processed {} node announcement reference rows (delta size: {}) in {:?}",
+	log_info!(logger, "Fetched + processed {} node announcement reference rows (delta size: {}) in {:?}",
 		reference_row_count, delta_set.len(), start.elapsed());
 
 	let current_timestamp = snapshot_reference_timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
@@ -558,6 +563,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	// get all the intermediate node updates
 	// (to calculate the set of mutated fields for snapshotting, where intermediate updates may
 	// have been omitted)
+	let start = Instant::now();
 	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &effective_threshold_timestamp];
 	let intermediate_updates = client.query_raw("
 		SELECT announcement_signed, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen
@@ -639,7 +645,7 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 
 		previous_node_id = Some(node_id);
 	}
-	log_info!(logger, "Processed intermediate node announcement rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
+	log_info!(logger, "Fetched + processed intermediate node announcement rows ({}) (delta size: {}): {:?}", intermediate_update_count, delta_set.len(), start.elapsed());
 
 	delta_set
 }
