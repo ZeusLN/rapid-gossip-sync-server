@@ -187,17 +187,23 @@ pub(super) async fn fetch_channel_announcements<L: Deref>(delta_set: &mut DeltaS
 		let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
 			[&channel_ids, &last_sync_timestamp_float];
 		let newer_oldest_directional_updates = client.query_raw("
-			SELECT short_channel_id, CAST(EXTRACT('epoch' from distinct_chans.seen) AS BIGINT) AS seen FROM (
-				SELECT DISTINCT ON (short_channel_id) *
-				FROM (
-					SELECT DISTINCT ON (short_channel_id, direction) short_channel_id, seen
-					FROM channel_updates
-					WHERE short_channel_id = any($1)
-					ORDER BY short_channel_id ASC, direction ASC, seen ASC
-				) AS directional_last_seens
-				ORDER BY short_channel_id ASC, seen DESC
-			) AS distinct_chans
-			WHERE distinct_chans.seen >= TO_TIMESTAMP($2)
+			SELECT scids.short_channel_id, CAST(EXTRACT('epoch' from GREATEST(dir0.seen, dir1.seen)) AS BIGINT) AS seen
+			FROM unnest($1::bigint[]) AS scids(short_channel_id)
+			CROSS JOIN LATERAL (
+				SELECT seen
+				FROM channel_updates
+				WHERE short_channel_id = scids.short_channel_id AND direction = false
+				ORDER BY seen ASC
+				LIMIT 1
+			) dir0
+			CROSS JOIN LATERAL (
+				SELECT seen
+				FROM channel_updates
+				WHERE short_channel_id = scids.short_channel_id AND direction = true
+				ORDER BY seen ASC
+				LIMIT 1
+			) dir1
+			WHERE GREATEST(dir0.seen, dir1.seen) >= TO_TIMESTAMP($2)
 			", params).await.unwrap();
 		let mut pinned_updates = Box::pin(newer_oldest_directional_updates);
 
@@ -334,17 +340,22 @@ pub(super) async fn fetch_channel_updates<L: Deref>(delta_set: &mut DeltaSet, cl
 	// there was an update in either direction that happened after the last sync (to avoid
 	// collecting too many reference updates)
 	let reference_rows = client.query_raw("
-		SELECT id, direction, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen, blob_signed FROM channel_updates
-		WHERE id IN (
-			SELECT DISTINCT ON (short_channel_id, direction) id
+		SELECT cu.id, d.direction, CAST(EXTRACT('epoch' from cu.seen) AS BIGINT) AS seen, cu.blob_signed
+		FROM (
+			SELECT DISTINCT short_channel_id
 			FROM channel_updates
-			WHERE seen < TO_TIMESTAMP($1) AND short_channel_id IN (
-				SELECT DISTINCT ON (short_channel_id) short_channel_id
-				FROM channel_updates
-				WHERE seen >= TO_TIMESTAMP($1)
-			)
-			ORDER BY short_channel_id ASC, direction ASC, seen DESC
-		)
+			WHERE seen >= TO_TIMESTAMP($1)
+		) AS recent_scids
+		CROSS JOIN (VALUES (false), (true)) AS d(direction)
+		JOIN LATERAL (
+			SELECT id, seen, blob_signed
+			FROM channel_updates
+			WHERE short_channel_id = recent_scids.short_channel_id
+				AND direction = d.direction
+				AND seen < TO_TIMESTAMP($1)
+			ORDER BY seen DESC
+			LIMIT 1
+		) cu ON true
 		", [last_sync_timestamp_float]).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
@@ -502,12 +513,16 @@ pub(super) async fn fetch_node_updates<L: Deref + Clone>(network_graph: &Network
 	// get the latest node updates prior to last_sync_timestamp
 	let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&node_ids, &last_sync_timestamp_float];
 	let reference_rows = client.query_raw("
-		SELECT DISTINCT ON (public_key) public_key, CAST(EXTRACT('epoch' from seen) AS BIGINT) AS seen, announcement_signed
-		FROM node_announcements
-		WHERE
-			public_key = ANY($1) AND
-			seen < TO_TIMESTAMP($2)
-		ORDER BY public_key ASC, seen DESC
+		SELECT pk.public_key, CAST(EXTRACT('epoch' from na.seen) AS BIGINT) AS seen, na.announcement_signed
+		FROM unnest($1::varchar[]) AS pk(public_key)
+		CROSS JOIN LATERAL (
+			SELECT seen, announcement_signed
+			FROM node_announcements
+			WHERE public_key = pk.public_key
+				AND seen < TO_TIMESTAMP($2)
+			ORDER BY seen DESC
+			LIMIT 1
+		) na
 		", params).await.unwrap();
 	let mut pinned_rows = Box::pin(reference_rows);
 
