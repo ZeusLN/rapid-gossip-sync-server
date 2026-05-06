@@ -43,7 +43,8 @@ impl<L: Deref + Clone> Snapshotter<L> where L::Target: Logger {
 
 		// this is gonna be a never-ending background job
 		loop {
-			self.generate_snapshots(config::SYMLINK_GRANULARITY_INTERVAL as u64, snapshot_interval, &snapshot_scopes, &cache_path(), None).await;
+			let max_symlink_count = Some(config::MAX_SNAPSHOT_SCOPE as u64 / config::SYMLINK_GRANULARITY_INTERVAL as u64);
+			self.generate_snapshots(config::SYMLINK_GRANULARITY_INTERVAL as u64, snapshot_interval, &snapshot_scopes, &cache_path(), max_symlink_count).await;
 
 			// constructing the snapshots may have taken a while
 			let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
