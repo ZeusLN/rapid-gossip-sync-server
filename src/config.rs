@@ -7,14 +7,13 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::io::Cursor;
 use bitcoin::Network;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::secp256k1::PublicKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use lightning::ln::msgs::ChannelAnnouncement;
 use lightning::util::logger::Logger;
-use lightning::util::ser::Readable;
+use lightning::util::ser::LengthReadable;
 use lightning_block_sync::http::HttpEndpoint;
 use lightning_block_sync::rest::RestClient;
 use tokio_postgres::Config;
@@ -234,7 +233,7 @@ pub(crate) async fn upgrade_db<L: Deref + Clone + Send + Sync + 'static>(
 				let announcement: Vec<u8> = row.get("announcement_signed");
 				let tx_ref = &tx;
 				updates.push(async move {
-					let scid = ChannelAnnouncement::read(&mut Cursor::new(&announcement)).unwrap().contents.short_channel_id as i64;
+					let scid = ChannelAnnouncement::read_from_fixed_length_buffer(&mut &announcement[..]).unwrap().contents.short_channel_id as i64;
 					assert!(scid > 0); // Will roll over in some 150 years or so
 					tx_ref.execute("UPDATE channel_announcements SET short_channel_id = $1 WHERE id = $2", &[&scid, &id]).await.unwrap();
 				});

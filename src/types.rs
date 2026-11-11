@@ -10,7 +10,7 @@ use crate::downloader::GossipRouter;
 use crate::verifier::ChainVerifier;
 
 pub(crate) type GossipChainAccess<L> = Arc<ChainVerifier<L>>;
-pub(crate) type GossipPeerManager<L> = Arc<PeerManager<lightning_net_tokio::SocketDescriptor, ErroringMessageHandler, Arc<GossipRouter<L>>, IgnoringMessageHandler, L, IgnoringMessageHandler, Arc<KeysManager>>>;
+pub(crate) type GossipPeerManager<L> = Arc<PeerManager<lightning_net_tokio::SocketDescriptor, ErroringMessageHandler, Arc<GossipRouter<L>>, IgnoringMessageHandler, L, IgnoringMessageHandler, Arc<KeysManager>, IgnoringMessageHandler>>;
 
 #[derive(Debug)]
 pub(crate) enum GossipMessage {
