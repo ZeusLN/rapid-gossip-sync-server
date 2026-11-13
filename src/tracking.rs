@@ -36,7 +36,7 @@ pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(pe
 	rand_hasher.write_u8(2);
 	random_data[0..8].copy_from_slice(&rand_hasher.finish().to_ne_bytes());
 
-	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef));
+	let keys_manager = Arc::new(KeysManager::new(&key, 0xdeadbeef, 0xdeadbeef, true));
 
 	let router = Arc::new(GossipRouter::new(network_graph, persistence_sender.clone(), logger.clone()));
 
@@ -45,6 +45,7 @@ pub(crate) async fn download_gossip<L: Deref + Clone + Send + Sync + 'static>(pe
 		route_handler: Arc::clone(&router),
 		onion_message_handler: IgnoringMessageHandler {},
 		custom_message_handler: IgnoringMessageHandler {},
+		send_only_message_handler: IgnoringMessageHandler {},
 	};
 	let peer_handler = Arc::new(PeerManager::new(
 		message_handler,

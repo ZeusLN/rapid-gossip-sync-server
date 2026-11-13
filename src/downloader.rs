@@ -2,8 +2,7 @@ use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
 use bitcoin::secp256k1::PublicKey;
-use lightning::events::{MessageSendEvent, MessageSendEventsProvider};
-use lightning::ln::msgs::{ChannelAnnouncement, ChannelUpdate, Init, LightningError, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
+use lightning::ln::msgs::{BaseMessageHandler, ChannelAnnouncement, ChannelUpdate, Init, LightningError, MessageSendEvent, NodeAnnouncement, QueryChannelRange, QueryShortChannelIds, ReplyChannelRange, ReplyShortChannelIdsEnd, RoutingMessageHandler};
 use lightning::routing::gossip::{NetworkGraph, NodeId, P2PGossipSync};
 use lightning::types::features::{InitFeatures, NodeFeatures};
 use lightning::util::logger::Logger;
@@ -110,7 +109,7 @@ impl<L: Deref + Clone + Send + Sync> GossipRouter<L> where L::Target: Logger {
 	}
 }
 
-impl<L: Deref + Clone + Send + Sync> MessageSendEventsProvider for GossipRouter<L> where L::Target: Logger {
+impl<L: Deref + Clone + Send + Sync> BaseMessageHandler for GossipRouter<L> where L::Target: Logger {
 	fn get_and_clear_pending_msg_events(&self) -> Vec<MessageSendEvent> {
 		let gossip_evs = self.outbound_gossiper.get_and_clear_pending_msg_events();
 		for ev in gossip_evs {
@@ -128,6 +127,22 @@ impl<L: Deref + Clone + Send + Sync> MessageSendEventsProvider for GossipRouter<
 			}
 		}
 		self.native_router.get_and_clear_pending_msg_events()
+	}
+
+	fn peer_connected(&self, their_node_id: PublicKey, init: &Init, inbound: bool) -> Result<(), ()> {
+		self.native_router.peer_connected(their_node_id, init, inbound)
+	}
+
+	fn peer_disconnected(&self, their_node_id: PublicKey) {
+		self.native_router.peer_disconnected(their_node_id)
+	}
+
+	fn provided_init_features(&self, their_node_id: PublicKey) -> InitFeatures {
+		self.native_router.provided_init_features(their_node_id)
+	}
+
+	fn provided_node_features(&self) -> NodeFeatures {
+		self.native_router.provided_node_features()
 	}
 }
 
@@ -162,10 +177,6 @@ impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> w
 		self.native_router.get_next_node_announcement(starting_point)
 	}
 
-	fn peer_connected(&self, their_node_id: PublicKey, init: &Init, inbound: bool) -> Result<(), ()> {
-		self.native_router.peer_connected(their_node_id, init, inbound)
-	}
-
 	fn handle_reply_channel_range(&self, their_node_id: PublicKey, msg: ReplyChannelRange) -> Result<(), LightningError> {
 		self.native_router.handle_reply_channel_range(their_node_id, msg)
 	}
@@ -180,13 +191,5 @@ impl<L: Deref + Clone + Send + Sync> RoutingMessageHandler for GossipRouter<L> w
 
 	fn handle_query_short_channel_ids(&self, their_node_id: PublicKey, msg: QueryShortChannelIds) -> Result<(), LightningError> {
 		self.native_router.handle_query_short_channel_ids(their_node_id, msg)
-	}
-
-	fn provided_init_features(&self, their_node_id: PublicKey) -> InitFeatures {
-		self.native_router.provided_init_features(their_node_id)
-	}
-
-	fn provided_node_features(&self) -> NodeFeatures {
-		self.native_router.provided_node_features()
 	}
 }
